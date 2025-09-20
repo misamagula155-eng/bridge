@@ -1,4 +1,4 @@
-# bridge
+k# bridge
 [http bridge](https://github.com/ton-connect/docs/blob/main/bridge.md) for tonconnect 2.0
 
 **note:** for common issues and troubleshooting, see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)
