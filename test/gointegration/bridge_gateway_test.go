@@ -764,9 +764,9 @@ func TestBridge_LargeClientAndToIDs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), testSSETimeout)
 	defer cancel()
 
-	// Create large IDs with 1024*100 = 102400 characters each
-	largeClientID := strings.Repeat("a", 1024*100)
-	largeToID := strings.Repeat("b", 1024*100)
+	// Create large IDs with 2048*100 = 204800 characters each
+	largeClientID := strings.Repeat("a", 2048*100)
+	largeToID := strings.Repeat("b", 2048*100)
 
 	// Create a sender gateway with the large client ID
 	sender, err := OpenBridge(ctx, OpenOpts{BridgeURL: BRIDGE_URL, SessionID: largeClientID})

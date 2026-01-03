@@ -1,4 +1,4 @@
-package handlerv1
+package handlerv3
 
 import (
 	"net/http"
@@ -8,21 +8,22 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/ton-connect/bridge/internal/ntp"
 	"github.com/ton-connect/bridge/internal/utils"
-	"github.com/ton-connect/bridge/internal/v1/storage"
+	storagev3 "github.com/ton-connect/bridge/internal/v3/storage"
 )
 
 func TestSendMessageHandler_Returns200(t *testing.T) {
 	// Setup
 	e := echo.New()
 
-	memStorage := storage.NewMemStorage(nil, nil)
+	memStorage := storagev3.NewMemStorage(nil, nil)
 	extractor, err := utils.NewRealIPExtractor([]string{})
 	if err != nil {
 		t.Fatalf("failed to create RealIPExtractor: %v", err)
 	}
 
-	h := NewHandler(memStorage, 10*time.Second, extractor, nil, nil)
+	h := NewHandler(memStorage, 10*time.Second, extractor, ntp.NewLocalTimeProvider(), nil, nil)
 
 	// Create request with required query parameters
 	// The "to" parameter needs to be a valid hex-encoded public key (64 chars)
@@ -30,7 +31,7 @@ func TestSendMessageHandler_Returns200(t *testing.T) {
 	clientID := "test-client-id"
 	body := strings.NewReader("test message payload")
 
-	req := httptest.NewRequest(http.MethodPost, "/bridge/message?client_id="+clientID+"&to="+toID+"&ttl=60&no_request_source=true", body)
+	req := httptest.NewRequest(http.MethodPost, "/bridge/message?client_id="+clientID+"&to="+toID+"&ttl=60", body)
 	req.Header.Set("Content-Type", "application/octet-stream")
 
 	rec := httptest.NewRecorder()
@@ -62,13 +63,13 @@ func TestSendMessageHandler_MissingClientID(t *testing.T) {
 	// Setup
 	e := echo.New()
 
-	memStorage := storage.NewMemStorage(nil, nil)
+	memStorage := storagev3.NewMemStorage(nil, nil)
 	extractor, err := utils.NewRealIPExtractor([]string{})
 	if err != nil {
 		t.Fatalf("failed to create RealIPExtractor: %v", err)
 	}
 
-	h := NewHandler(memStorage, 10*time.Second, extractor, nil, nil)
+	h := NewHandler(memStorage, 10*time.Second, extractor, ntp.NewLocalTimeProvider(), nil, nil)
 
 	// Create request without client_id
 	toID := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -97,13 +98,13 @@ func TestSendMessageHandler_MissingTo(t *testing.T) {
 	// Setup
 	e := echo.New()
 
-	memStorage := storage.NewMemStorage(nil, nil)
+	memStorage := storagev3.NewMemStorage(nil, nil)
 	extractor, err := utils.NewRealIPExtractor([]string{})
 	if err != nil {
 		t.Fatalf("failed to create RealIPExtractor: %v", err)
 	}
 
-	h := NewHandler(memStorage, 10*time.Second, extractor, nil, nil)
+	h := NewHandler(memStorage, 10*time.Second, extractor, ntp.NewLocalTimeProvider(), nil, nil)
 
 	// Create request without "to" parameter
 	clientID := "test-client-id"
@@ -132,13 +133,13 @@ func TestSendMessageHandler_MissingTTL(t *testing.T) {
 	// Setup
 	e := echo.New()
 
-	memStorage := storage.NewMemStorage(nil, nil)
+	memStorage := storagev3.NewMemStorage(nil, nil)
 	extractor, err := utils.NewRealIPExtractor([]string{})
 	if err != nil {
 		t.Fatalf("failed to create RealIPExtractor: %v", err)
 	}
 
-	h := NewHandler(memStorage, 10*time.Second, extractor, nil, nil)
+	h := NewHandler(memStorage, 10*time.Second, extractor, ntp.NewLocalTimeProvider(), nil, nil)
 
 	// Create request without ttl
 	toID := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -168,13 +169,13 @@ func TestSendMessageHandler_TTLTooHigh(t *testing.T) {
 	// Setup
 	e := echo.New()
 
-	memStorage := storage.NewMemStorage(nil, nil)
+	memStorage := storagev3.NewMemStorage(nil, nil)
 	extractor, err := utils.NewRealIPExtractor([]string{})
 	if err != nil {
 		t.Fatalf("failed to create RealIPExtractor: %v", err)
 	}
 
-	h := NewHandler(memStorage, 10*time.Second, extractor, nil, nil)
+	h := NewHandler(memStorage, 10*time.Second, extractor, ntp.NewLocalTimeProvider(), nil, nil)
 
 	// Create request with TTL > 300
 	toID := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -204,20 +205,20 @@ func TestSendMessageHandler_LargeToID(t *testing.T) {
 	// Setup
 	e := echo.New()
 
-	memStorage := storage.NewMemStorage(nil, nil)
+	memStorage := storagev3.NewMemStorage(nil, nil)
 	extractor, err := utils.NewRealIPExtractor([]string{})
 	if err != nil {
 		t.Fatalf("failed to create RealIPExtractor: %v", err)
 	}
 
-	h := NewHandler(memStorage, 10*time.Second, extractor, nil, nil)
+	h := NewHandler(memStorage, 10*time.Second, extractor, ntp.NewLocalTimeProvider(), nil, nil)
 
 	// Create toID and clientID with 2048*100 = 204800 characters each
 	toID := strings.Repeat("a", 2048*100)
 	clientID := strings.Repeat("b", 2048*100)
 	body := strings.NewReader("test message payload")
 
-	req := httptest.NewRequest(http.MethodPost, "/bridge/message?client_id="+clientID+"&to="+toID+"&ttl=60&no_request_source=true", body)
+	req := httptest.NewRequest(http.MethodPost, "/bridge/message?client_id="+clientID+"&to="+toID+"&ttl=60", body)
 	req.Header.Set("Content-Type", "application/octet-stream")
 
 	rec := httptest.NewRecorder()
@@ -226,7 +227,7 @@ func TestSendMessageHandler_LargeToID(t *testing.T) {
 	// Execute
 	err = h.SendMessageHandler(c)
 
-	// Verify - handler should process the request (returns 200 with no_request_source=true)
+	// Verify - handler should process the request (returns 200)
 	if err != nil {
 		t.Fatalf("SendMessageHandler returned error: %v", err)
 	}

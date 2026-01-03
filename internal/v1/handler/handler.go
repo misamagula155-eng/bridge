@@ -355,7 +355,12 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 	noRequestSourceParam, ok := params["no_request_source"]
 	enableRequestSource := !ok || len(noRequestSourceParam) == 0 || strings.ToLower(noRequestSourceParam[0]) != "true"
 
-	if enableRequestSource {
+	toIdLen := 0
+	if len(toId) > 0 {
+		toIdLen = len(toId[0])
+	}
+
+	if enableRequestSource && toIdLen != 32 {
 		origin := utils.ExtractOrigin(c.Request().Header.Get("Origin"))
 		ip := h.realIP.Extract(c.Request())
 		userAgent := c.Request().Header.Get("User-Agent")
