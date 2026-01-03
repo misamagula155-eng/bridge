@@ -360,7 +360,7 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 		toIdLen = len(toId[0])
 	}
 
-	if enableRequestSource && toIdLen != 32 {
+	if enableRequestSource && toIdLen == 64 {
 		origin := utils.ExtractOrigin(c.Request().Header.Get("Origin"))
 		ip := h.realIP.Extract(c.Request())
 		userAgent := c.Request().Header.Get("User-Agent")
