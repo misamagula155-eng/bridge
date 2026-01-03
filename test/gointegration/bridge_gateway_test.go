@@ -759,3 +759,62 @@ func bumpID(s string, delta uint64) string {
 	// if non-numeric, just return the same (server will ignore resume semantics)
 	return s
 }
+
+func TestBridge_LargeClientAndToIDs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), testSSETimeout)
+	defer cancel()
+
+	// Create large IDs with 1024*100 = 102400 characters each
+	largeClientID := strings.Repeat("a", 1024*100)
+	largeToID := strings.Repeat("b", 1024*100)
+
+	// Create a sender gateway with the large client ID
+	sender, err := OpenBridge(ctx, OpenOpts{BridgeURL: BRIDGE_URL, SessionID: largeClientID})
+	if err != nil {
+		t.Fatalf("open sender with large ID: %v", err)
+	}
+	defer func() {
+		if err = sender.Close(); err != nil {
+			log.Println("error during sender.Close():", err)
+		}
+	}()
+	if !sender.IsReady() {
+		t.Fatal("sender not ready")
+	}
+
+	// Create a receiver gateway with the large to ID
+	receiver, err := OpenBridge(ctx, OpenOpts{BridgeURL: BRIDGE_URL, SessionID: largeToID})
+	if err != nil {
+		t.Fatalf("open receiver with large ID: %v", err)
+	}
+	defer func() { _ = receiver.Close() }()
+	if err := receiver.WaitReady(ctx); err != nil {
+		t.Fatalf("receiver not ready: %v", err)
+	}
+
+	// Send a message from large client ID to large to ID
+	if err := sender.Send(ctx, []byte("large-id-test"), largeClientID, largeToID, nil); err != nil {
+		t.Fatalf("send with large IDs: %v", err)
+	}
+
+	// Wait for the message
+	ev, err := receiver.WaitMessage(ctx)
+	if err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+
+	var bm bridgeMessage
+	if err := json.Unmarshal([]byte(ev.Data), &bm); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(bm.Message)
+	if err != nil {
+		t.Fatalf("b64: %v", err)
+	}
+	if string(raw) != "large-id-test" {
+		t.Fatalf("expected 'large-id-test', got %q", string(raw))
+	}
+	if bm.From != largeClientID {
+		t.Fatalf("expected from=%s (length %d), got length %d", largeClientID[:20]+"...", len(largeClientID), len(bm.From))
+	}
+}
