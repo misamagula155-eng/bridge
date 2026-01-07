@@ -767,10 +767,6 @@ func TestBridge_LargeClientAndToIDs(t *testing.T) {
 		// Create a sender gateway with the large client ID
 		sender, err := OpenBridge(ctx, OpenOpts{BridgeURL: BRIDGE_URL, SessionID: clientID})
 		if err != nil {
-			if strings.Contains(err.Error(), "status 414") {
-				// This is expected if request pass through the Nginx and get 414 error, we don't need to go further
-				return
-			}
 			t.Fatalf("open sender with large ID: %v", err)
 		}
 		defer func() {
@@ -786,6 +782,11 @@ func TestBridge_LargeClientAndToIDs(t *testing.T) {
 		err = sender.Send(ctx, []byte("large-id-test"), clientID, largeToID, nil)
 		if err == nil {
 			t.Fatalf("send with large IDs: expected error, got nil")
+		}
+
+		if strings.Contains(err.Error(), "status 414") {
+			// This is expected if request pass through the Nginx and get 414 error, we don't need to go further
+			return
 		}
 
 		expectedErrStr := "public address must be 64 characters long"
