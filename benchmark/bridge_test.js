@@ -13,8 +13,6 @@ export let delivery_latency = new Trend('delivery_latency');
 export let json_parse_errors = new Counter('json_parse_errors');
 export let missing_timestamps = new Counter('missing_timestamps');
 
-const PRE_ALLOCATED_VUS = 100
-const MAX_VUS = PRE_ALLOCATED_VUS * 25
 
 const BRIDGE_URL = __ENV.BRIDGE_URL || 'http://localhost:8081/bridge';
 
@@ -26,12 +24,38 @@ const RAMP_DOWN = __ENV.RAMP_DOWN || '10s';
 const SSE_VUS = Number(__ENV.SSE_VUS || 100);
 const SEND_RATE = Number(__ENV.SEND_RATE || 1000);
 
+const PRE_ALLOCATED_VUS = SSE_VUS
+const MAX_VUS = PRE_ALLOCATED_VUS
+
+const LISTENER_WRITERS_RATIO = Number(__ENV.LISTENER_WRITERS_RATIO || 3);
+const TOTAL_INSTANCES = Number(__ENV.TOTAL_INSTANCES || 1);
+
+const ID_SPACE_SIZE = SSE_VUS * TOTAL_INSTANCES * LISTENER_WRITERS_RATIO;
+
 // Generate valid hex client IDs that the bridge expects
-const ID_POOL = new SharedArray('ids', () => Array.from({length: 100}, (_, i) => {
-  return i.toString(16).padStart(64, '0'); // 64-char hex strings
-}));
+function getSSEIDs(vuIndex) {
+  const startIndex = (vuIndex) * LISTENER_WRITERS_RATIO;
+  const ids = [];
+  const ids_dec = [];
+  for (let i = 0; i < LISTENER_WRITERS_RATIO; i++) {
+    const id = startIndex + i;
+    ids_dec.push(id);
+    ids.push([id.toString(16).padStart(64, '0')]);
+  }
+  return ids;
+}
 
-
+// Generate valid hex client IDs that the bridge expects
+// This generates a random client ID for the sender in the ID space limited by vuIndex
+// to avoid sending message to non-existent listener
+// vuIndex is the incrementing index
+function getID(vuIndex) {
+  let maxIndex = ID_SPACE_SIZE - LISTENER_WRITERS_RATIO - 1;
+  maxIndex = vuIndex < maxIndex ? vuIndex : maxIndex;
+    
+  const targetIndex = Math.floor(Math.random() * maxIndex);
+  return targetIndex.toString(16).padStart(64, '0');
+}
 
 export const options = {
     discardResponseBodies: true,
@@ -76,15 +100,8 @@ export const options = {
 };
 
 export function sseWorker() {
-  // Use round-robin assignment for more predictable URLs
-  const vuIndex = exec.vu.idInTest - 1;
-  const groupId = Math.floor(vuIndex / 10); // 10 VUs per group
-  // Use same IDs as sender
-  const ids = [
-    ID_POOL[groupId * 3 % ID_POOL.length], 
-    ID_POOL[(groupId * 3 + 1) % ID_POOL.length], 
-    ID_POOL[(groupId * 3 + 2) % ID_POOL.length]
-  ];
+  const vuIndex = exec.scenario.iterationInTest;
+  const ids = getSSEIDs(vuIndex);
   const url = `${BRIDGE_URL}/events?client_id=${ids.join(',')}`;
   
   // Keep reconnecting for the test duration
@@ -131,11 +148,16 @@ export function sseWorker() {
 
 export function messageSender() {
   // Use fixed client pairs to reduce URL variations
-  const vuIndex = exec.vu.idInTest % ID_POOL.length;
-  const to = ID_POOL[vuIndex];
-  const from = ID_POOL[(vuIndex + 1) % ID_POOL.length];
+  const vuIndex = exec.scenario.iterationInTest;
+  const to = getID(vuIndex);
+  let from = getID(vuIndex);
+  // Avoid sending message to the same client ID
+  while (from === to) {
+    from = getID()
+  }
+  
   const topic = Math.random() < 0.5 ? 'sendTransaction' : 'signData';
-  const body = encoding.b64encode(JSON.stringify({ ts: Date.now(), data: 'test_message' }));
+  const body = encoding.b64encode(JSON.stringify({ ts: Date.now(), data: `${from} ${to}` }));
   const url = `${BRIDGE_URL}/message?client_id=${from}&to=${to}&ttl=300&topic=${topic}`;
   
   const r = http.post(url, body, {
