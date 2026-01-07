@@ -830,7 +830,11 @@ func TestBridge_LargeClientAndToIDs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if err = resp.Body.Close(); err != nil {
+				log.Println("error during resp.Body.Close():", err)
+			}
+		}()
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			t.Fatalf("read body failed: %v", err)
