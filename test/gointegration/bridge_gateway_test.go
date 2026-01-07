@@ -18,6 +18,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ton-connect/bridge/internal/utils"
 )
 
 // ===== Test config =====
@@ -111,10 +113,9 @@ func OpenBridge(ctx context.Context, opts OpenOpts) (*BridgeGateway, error) {
 
 	// Reader goroutine
 	go func() {
-		defer close(gw.msgs)
-		defer close(gw.errs)
-		// explicitly ignore Close() error to satisfy errcheck
 		defer func() {
+			close(gw.msgs)
+			close(gw.errs)
 			if err = gw.Close(); err != nil {
 				log.Println("error during gw.Close():", err)
 			}
@@ -162,10 +163,7 @@ func OpenBridge(ctx context.Context, opts OpenOpts) (*BridgeGateway, error) {
 			// ignore event:, retry:, etc.
 		}
 		if err := sc.Err(); err != nil && !errors.Is(err, io.EOF) {
-			select {
-			case gw.errs <- err:
-			default:
-			}
+			gw.errs <- err
 		}
 	}()
 
@@ -273,18 +271,17 @@ func (g *BridgeGateway) Send(ctx context.Context, payload []byte, fromSession, t
 func (g *BridgeGateway) WaitMessage(ctx context.Context) (SSEEvent, error) {
 	select {
 	case ev, ok := <-g.msgs:
-		if !ok {
-			return SSEEvent{}, io.EOF
+		if ok {
+			return ev, nil
 		}
-		return ev, nil
 	case err := <-g.errs:
 		if err != nil {
 			return SSEEvent{}, err
 		}
-		return SSEEvent{}, io.EOF
 	case <-ctx.Done():
 		return SSEEvent{}, ctx.Err()
 	}
+	return SSEEvent{}, io.EOF
 }
 
 // ===== Helpers =====
@@ -764,57 +761,83 @@ func TestBridge_LargeClientAndToIDs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), testSSETimeout)
 	defer cancel()
 
-	// Create large IDs with 2048*100 = 204800 characters each
-	largeClientID := strings.Repeat("a", 2048*100)
-	largeToID := strings.Repeat("b", 2048*100)
+	t.Run("large client ID", func(t *testing.T) {
+		clientID := randomSessionID(t)
+		// Create large IDs with 2048*100 = 204800
+		largeToID := strings.Repeat("b", 2048*100)
 
-	// Create a sender gateway with the large client ID
-	sender, err := OpenBridge(ctx, OpenOpts{BridgeURL: BRIDGE_URL, SessionID: largeClientID})
-	if err != nil {
-		t.Fatalf("open sender with large ID: %v", err)
-	}
-	defer func() {
-		if err = sender.Close(); err != nil {
-			log.Println("error during sender.Close():", err)
+		// Create a sender gateway with the large client ID
+		sender, err := OpenBridge(ctx, OpenOpts{BridgeURL: BRIDGE_URL, SessionID: clientID})
+		if err != nil {
+			t.Fatalf("open sender with large ID: %v", err)
 		}
-	}()
-	if !sender.IsReady() {
-		t.Fatal("sender not ready")
-	}
+		defer func() {
+			if err = sender.Close(); err != nil {
+				log.Println("error during sender.Close():", err)
+			}
+		}()
+		if !sender.IsReady() {
+			t.Fatal("sender not ready")
+		}
 
-	// Create a receiver gateway with the large to ID
-	receiver, err := OpenBridge(ctx, OpenOpts{BridgeURL: BRIDGE_URL, SessionID: largeToID})
-	if err != nil {
-		t.Fatalf("open receiver with large ID: %v", err)
-	}
-	defer func() { _ = receiver.Close() }()
-	if err := receiver.WaitReady(ctx); err != nil {
-		t.Fatalf("receiver not ready: %v", err)
-	}
+		// Send a message from large client ID to large to ID
+		err = sender.Send(ctx, []byte("large-id-test"), clientID, largeToID, nil)
+		if err == nil {
+			t.Fatalf("send with large IDs: expected error, got nil")
+		}
 
-	// Send a message from large client ID to large to ID
-	if err := sender.Send(ctx, []byte("large-id-test"), largeClientID, largeToID, nil); err != nil {
-		t.Fatalf("send with large IDs: %v", err)
-	}
+		expectedErrStr := utils.ErrInvalidPublicAddressLength.Error()
+		if !strings.Contains(err.Error(), expectedErrStr) {
+			t.Fatalf("send with large IDs: expected (%v), got (%v)", utils.ErrInvalidPublicAddressLength, err)
+		}
+	})
 
-	// Wait for the message
-	ev, err := receiver.WaitMessage(ctx)
-	if err != nil {
-		t.Fatalf("wait: %v", err)
-	}
+	t.Run("large sender ID", func(t *testing.T) {
+		senderID := strings.Repeat("b", 2048*100)
 
-	var bm bridgeMessage
-	if err := json.Unmarshal([]byte(ev.Data), &bm); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	raw, err := base64.StdEncoding.DecodeString(bm.Message)
-	if err != nil {
-		t.Fatalf("b64: %v", err)
-	}
-	if string(raw) != "large-id-test" {
-		t.Fatalf("expected 'large-id-test', got %q", string(raw))
-	}
-	if bm.From != largeClientID {
-		t.Fatalf("expected from=%s (length %d), got length %d", largeClientID[:20]+"...", len(largeClientID), len(bm.From))
-	}
+		// Create a sender gateway with the large client ID
+		r, err := OpenBridge(ctx, OpenOpts{BridgeURL: BRIDGE_URL, SessionID: senderID})
+		if err != nil {
+			t.Fatalf("open bridge with large SessionID: %v", err)
+		}
+		defer func() {
+			if err = r.Close(); err != nil {
+				log.Println("error during r.Close():", err)
+			}
+		}()
+		if !r.IsReady() {
+			t.Fatal("receiver not ready")
+		}
+		_, err = r.WaitMessage(ctx)
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+
+	})
+
+	t.Run("large sender ID, validate error message", func(t *testing.T) {
+		senderID := strings.Repeat("b", 2048*100)
+
+		// Create a sender gateway with the large client ID
+		u, _ := url.Parse(BRIDGE_URL + "/events")
+		q := u.Query()
+		q.Add("client_id", senderID)
+		u.RawQuery = q.Encode()
+
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		req.Header.Set("Accept", "text/event-stream")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("read body failed: %v", err)
+		}
+
+		if !strings.Contains(string(body), "public address must be 64 characters long") {
+			t.Fatalf("expected error message, got %s", string(body))
+		}
+	})
 }

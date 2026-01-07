@@ -3,6 +3,7 @@ package handlerv3
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -13,232 +14,175 @@ import (
 	storagev3 "github.com/ton-connect/bridge/internal/v3/storage"
 )
 
-func TestSendMessageHandler_Returns200(t *testing.T) {
-	// Setup
-	e := echo.New()
+const (
+	defaultClientID = "a3f9c8e21d7b4a5e9c0f6b1d8e72c4fa9b0e1d5c7a6f84b2e93d0c1a5f7e8b42"
+	defaultToID     = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+)
 
-	memStorage := storagev3.NewMemStorage(nil, nil)
-	extractor, err := utils.NewRealIPExtractor([]string{})
-	if err != nil {
-		t.Fatalf("failed to create RealIPExtractor: %v", err)
+func TestHandler(t *testing.T) {
+	defaultBody := "test message payload"
+
+	tCases := map[string]struct {
+		expectedStatus int
+		expectedBody   []string
+		rqParams       map[string]string
+		body           string
+	}{
+		"ok path": {
+			expectedStatus: http.StatusOK,
+			expectedBody:   []string{`"message":"OK"`, `"statusCode":200`},
+			rqParams: map[string]string{
+				"client_id":         defaultClientID,
+				"to":                defaultToID,
+				"ttl":               "60",
+				"no_request_source": "true",
+			},
+			body: defaultBody,
+		},
+		"missing client_id": {
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   []string{`"message":"param \"client_id\" not present"`},
+			rqParams: map[string]string{
+				"to":  defaultToID,
+				"ttl": "60",
+			},
+			body: defaultBody,
+		},
+		"missing to": {
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   []string{`"message":"param \"to\" not present"`},
+			rqParams: map[string]string{
+				"client_id": defaultClientID,
+				"ttl":       "60",
+			},
+			body: defaultBody,
+		},
+		"missing ttl": {
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   []string{`"message":"param \"ttl\" not present"`},
+			rqParams: map[string]string{
+				"client_id": defaultClientID,
+				"to":        defaultToID,
+			},
+			body: defaultBody,
+		},
+		"ttl too high": {
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   []string{`"message":"param \"ttl\" too high"`},
+			rqParams: map[string]string{
+				"client_id": defaultClientID,
+				"to":        defaultToID,
+				"ttl":       "500",
+			},
+			body: defaultBody,
+		},
+		"large toID": {
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   []string{utils.ErrInvalidPublicAddressLength.Error()},
+			rqParams: map[string]string{
+				"client_id":         defaultClientID,
+				"to":                strings.Repeat("a", 2048*100),
+				"ttl":               "60",
+				"no_request_source": "true",
+			},
+			body: defaultBody,
+		},
+		"large clientID": {
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   []string{"must be 64 characters long"},
+			rqParams: map[string]string{
+				"client_id":         strings.Repeat("a", 2048*100),
+				"to":                defaultToID,
+				"ttl":               "60",
+				"no_request_source": "true",
+			},
+			body: defaultBody,
+		},
+		"invalid clientID, length": {
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   []string{"failed to parse the", "client_id", utils.ErrInvalidPublicAddressLength.Error()},
+			rqParams: map[string]string{
+				"client_id":         defaultClientID[1:],
+				"to":                defaultToID,
+				"ttl":               "60",
+				"no_request_source": "true",
+			},
+			body: defaultBody,
+		},
+		"invalid toID, length": {
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   []string{"failed to parse the", "to", utils.ErrInvalidPublicAddressLength.Error()},
+			rqParams: map[string]string{
+				"client_id":         defaultClientID,
+				"to":                defaultToID[1:],
+				"ttl":               "60",
+				"no_request_source": "true",
+			},
+			body: defaultBody,
+		},
+		"invalid clientID, format": {
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   []string{"failed to parse the", "client_id", utils.ErrInvalidPublicAddressFormat.Error()},
+			rqParams: map[string]string{
+				"client_id":         "t" + defaultClientID[1:],
+				"to":                defaultToID,
+				"ttl":               "60",
+				"no_request_source": "true",
+			},
+			body: defaultBody,
+		},
+		"invalid toID, format": {
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   []string{"failed to parse the", "to", utils.ErrInvalidPublicAddressFormat.Error()},
+			rqParams: map[string]string{
+				"client_id":         defaultClientID,
+				"to":                "t" + defaultToID[1:],
+				"ttl":               "60",
+				"no_request_source": "true",
+			},
+			body: defaultBody,
+		},
 	}
+	for name, tc := range tCases {
+		t.Run(name, func(t *testing.T) {
+			e := echo.New()
 
-	h := NewHandler(memStorage, 10*time.Second, extractor, ntp.NewLocalTimeProvider(), nil, nil)
+			values := url.Values{}
+			for key, value := range tc.rqParams {
+				values.Set(key, value)
+			}
 
-	// Create request with required query parameters
-	// The "to" parameter needs to be a valid hex-encoded public key (64 chars)
-	toID := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	clientID := "test-client-id"
-	body := strings.NewReader("test message payload")
+			reqURL := "/bridge/message"
+			if len(values) > 0 {
+				reqURL += "?" + values.Encode()
+			}
 
-	req := httptest.NewRequest(http.MethodPost, "/bridge/message?client_id="+clientID+"&to="+toID+"&ttl=60", body)
-	req.Header.Set("Content-Type", "application/octet-stream")
+			req := httptest.NewRequest(http.MethodPost, reqURL, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/octet-stream")
 
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
+			memStorage := storagev3.NewMemStorage(nil, nil)
+			extractor, err := utils.NewRealIPExtractor([]string{})
+			if err != nil {
+				t.Fatalf("failed to create RealIPExtractor: %v", err)
+			}
 
-	// Execute
-	err = h.SendMessageHandler(c)
+			h := NewHandler(memStorage, 10*time.Second, extractor, ntp.NewLocalTimeProvider(), nil, nil)
 
-	// Verify
-	if err != nil {
-		t.Fatalf("SendMessageHandler returned error: %v", err)
-	}
+			rec := httptest.NewRecorder()
+			c := e.NewContext(req, rec)
+			if err := h.SendMessageHandler(c); err != nil {
+				t.Fatalf("SendMessageHandler returned error: %v", err)
+			}
 
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
-	}
+			if rec.Code != tc.expectedStatus {
+				t.Errorf("expected status %d, got %d", tc.expectedStatus, rec.Code)
+			}
 
-	// Check response body contains OK message
-	responseBody := rec.Body.String()
-	if !strings.Contains(responseBody, `"message":"OK"`) {
-		t.Errorf("expected response to contain OK message, got: %s", responseBody)
-	}
-	if !strings.Contains(responseBody, `"statusCode":200`) {
-		t.Errorf("expected response to contain statusCode 200, got: %s", responseBody)
-	}
-}
-
-func TestSendMessageHandler_MissingClientID(t *testing.T) {
-	// Setup
-	e := echo.New()
-
-	memStorage := storagev3.NewMemStorage(nil, nil)
-	extractor, err := utils.NewRealIPExtractor([]string{})
-	if err != nil {
-		t.Fatalf("failed to create RealIPExtractor: %v", err)
-	}
-
-	h := NewHandler(memStorage, 10*time.Second, extractor, ntp.NewLocalTimeProvider(), nil, nil)
-
-	// Create request without client_id
-	toID := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	body := strings.NewReader("test message payload")
-
-	req := httptest.NewRequest(http.MethodPost, "/bridge/message?to="+toID+"&ttl=60", body)
-	req.Header.Set("Content-Type", "application/octet-stream")
-
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-
-	// Execute
-	err = h.SendMessageHandler(c)
-
-	// Verify - should return error for missing client_id
-	if err != nil {
-		t.Fatalf("SendMessageHandler returned error: %v", err)
-	}
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
-	}
-}
-
-func TestSendMessageHandler_MissingTo(t *testing.T) {
-	// Setup
-	e := echo.New()
-
-	memStorage := storagev3.NewMemStorage(nil, nil)
-	extractor, err := utils.NewRealIPExtractor([]string{})
-	if err != nil {
-		t.Fatalf("failed to create RealIPExtractor: %v", err)
-	}
-
-	h := NewHandler(memStorage, 10*time.Second, extractor, ntp.NewLocalTimeProvider(), nil, nil)
-
-	// Create request without "to" parameter
-	clientID := "test-client-id"
-	body := strings.NewReader("test message payload")
-
-	req := httptest.NewRequest(http.MethodPost, "/bridge/message?client_id="+clientID+"&ttl=60", body)
-	req.Header.Set("Content-Type", "application/octet-stream")
-
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-
-	// Execute
-	err = h.SendMessageHandler(c)
-
-	// Verify - should return error for missing "to"
-	if err != nil {
-		t.Fatalf("SendMessageHandler returned error: %v", err)
-	}
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
-	}
-}
-
-func TestSendMessageHandler_MissingTTL(t *testing.T) {
-	// Setup
-	e := echo.New()
-
-	memStorage := storagev3.NewMemStorage(nil, nil)
-	extractor, err := utils.NewRealIPExtractor([]string{})
-	if err != nil {
-		t.Fatalf("failed to create RealIPExtractor: %v", err)
-	}
-
-	h := NewHandler(memStorage, 10*time.Second, extractor, ntp.NewLocalTimeProvider(), nil, nil)
-
-	// Create request without ttl
-	toID := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	clientID := "test-client-id"
-	body := strings.NewReader("test message payload")
-
-	req := httptest.NewRequest(http.MethodPost, "/bridge/message?client_id="+clientID+"&to="+toID, body)
-	req.Header.Set("Content-Type", "application/octet-stream")
-
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-
-	// Execute
-	err = h.SendMessageHandler(c)
-
-	// Verify - should return error for missing ttl
-	if err != nil {
-		t.Fatalf("SendMessageHandler returned error: %v", err)
-	}
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
-	}
-}
-
-func TestSendMessageHandler_TTLTooHigh(t *testing.T) {
-	// Setup
-	e := echo.New()
-
-	memStorage := storagev3.NewMemStorage(nil, nil)
-	extractor, err := utils.NewRealIPExtractor([]string{})
-	if err != nil {
-		t.Fatalf("failed to create RealIPExtractor: %v", err)
-	}
-
-	h := NewHandler(memStorage, 10*time.Second, extractor, ntp.NewLocalTimeProvider(), nil, nil)
-
-	// Create request with TTL > 300
-	toID := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	clientID := "test-client-id"
-	body := strings.NewReader("test message payload")
-
-	req := httptest.NewRequest(http.MethodPost, "/bridge/message?client_id="+clientID+"&to="+toID+"&ttl=500", body)
-	req.Header.Set("Content-Type", "application/octet-stream")
-
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-
-	// Execute
-	err = h.SendMessageHandler(c)
-
-	// Verify - should return error for TTL too high
-	if err != nil {
-		t.Fatalf("SendMessageHandler returned error: %v", err)
-	}
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
-	}
-}
-
-func TestSendMessageHandler_LargeToID(t *testing.T) {
-	// Setup
-	e := echo.New()
-
-	memStorage := storagev3.NewMemStorage(nil, nil)
-	extractor, err := utils.NewRealIPExtractor([]string{})
-	if err != nil {
-		t.Fatalf("failed to create RealIPExtractor: %v", err)
-	}
-
-	h := NewHandler(memStorage, 10*time.Second, extractor, ntp.NewLocalTimeProvider(), nil, nil)
-
-	// Create toID and clientID with 2048*100 = 204800 characters each
-	toID := strings.Repeat("a", 2048*100)
-	clientID := strings.Repeat("b", 2048*100)
-	body := strings.NewReader("test message payload")
-
-	req := httptest.NewRequest(http.MethodPost, "/bridge/message?client_id="+clientID+"&to="+toID+"&ttl=60", body)
-	req.Header.Set("Content-Type", "application/octet-stream")
-
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-
-	// Execute
-	err = h.SendMessageHandler(c)
-
-	// Verify - handler should process the request (returns 200)
-	if err != nil {
-		t.Fatalf("SendMessageHandler returned error: %v", err)
-	}
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
-	}
-
-	// Check response body contains OK message
-	responseBody := rec.Body.String()
-	if !strings.Contains(responseBody, `"message":"OK"`) {
-		t.Errorf("expected response to contain OK message, got: %s", responseBody)
+			for _, expectedBody := range tc.expectedBody {
+				if !strings.Contains(rec.Body.String(), expectedBody) {
+					t.Errorf("expected body to contain %q, got %q", expectedBody, rec.Body.String())
+				}
+			}
+		})
 	}
 }
