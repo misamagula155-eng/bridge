@@ -767,6 +767,10 @@ func TestBridge_LargeClientAndToIDs(t *testing.T) {
 		// Create a sender gateway with the large client ID
 		sender, err := OpenBridge(ctx, OpenOpts{BridgeURL: BRIDGE_URL, SessionID: clientID})
 		if err != nil {
+			if strings.Contains(err.Error(), "status 414") {
+				// This is expected if request pass through the Nginx and get 414 error, we don't need to go further
+				return
+			}
 			t.Fatalf("open sender with large ID: %v", err)
 		}
 		defer func() {
@@ -796,6 +800,10 @@ func TestBridge_LargeClientAndToIDs(t *testing.T) {
 		// Create a sender gateway with the large client ID
 		r, err := OpenBridge(ctx, OpenOpts{BridgeURL: BRIDGE_URL, SessionID: senderID})
 		if err != nil {
+			if strings.Contains(err.Error(), "status 414") {
+				// This is expected if request pass through the Nginx and get 414 error, we don't need to go further
+				return
+			}
 			t.Fatalf("open bridge with large SessionID: %v", err)
 		}
 		defer func() {
@@ -803,6 +811,7 @@ func TestBridge_LargeClientAndToIDs(t *testing.T) {
 				log.Println("error during r.Close():", err)
 			}
 		}()
+
 		if !r.IsReady() {
 			t.Fatal("receiver not ready")
 		}
@@ -833,6 +842,12 @@ func TestBridge_LargeClientAndToIDs(t *testing.T) {
 				log.Println("error during resp.Body.Close():", err)
 			}
 		}()
+
+		if resp.StatusCode == http.StatusRequestURITooLong {
+			// This is expected if request pass through the Nginx and get 414 error, we don't need to go further
+			return
+		}
+
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			t.Fatalf("read body failed: %v", err)
