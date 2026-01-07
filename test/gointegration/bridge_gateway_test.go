@@ -18,8 +18,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/ton-connect/bridge/internal/utils"
 )
 
 // ===== Test config =====
@@ -786,9 +784,9 @@ func TestBridge_LargeClientAndToIDs(t *testing.T) {
 			t.Fatalf("send with large IDs: expected error, got nil")
 		}
 
-		expectedErrStr := utils.ErrInvalidPublicAddressLength.Error()
+		expectedErrStr := "public address must be 64 characters long"
 		if !strings.Contains(err.Error(), expectedErrStr) {
-			t.Fatalf("send with large IDs: expected (%v), got (%v)", utils.ErrInvalidPublicAddressLength, err)
+			t.Fatalf("send with large IDs: expected (%v), got (%v)", expectedErrStr, err)
 		}
 	})
 
