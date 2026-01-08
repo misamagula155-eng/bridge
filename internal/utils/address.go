@@ -59,9 +59,9 @@ func (a PublicAddress) Validate() error {
 func (a PublicAddress) validateHex() bool {
 	for i := 0; i < len(a); i++ {
 		c := a[i]
-		if !((c >= '0' && c <= '9') ||
-			(c >= 'a' && c <= 'f') ||
-			(c >= 'A' && c <= 'F')) {
+		if (c < '0' || c > '9') &&
+			(c < 'a' || c > 'f') &&
+			(c < 'A' || c > 'F') {
 			return false
 		}
 	}
