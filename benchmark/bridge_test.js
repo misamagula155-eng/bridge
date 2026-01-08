@@ -27,20 +27,19 @@ const SEND_RATE = Number(__ENV.SEND_RATE || 1000);
 const PRE_ALLOCATED_VUS = SSE_VUS
 const MAX_VUS = PRE_ALLOCATED_VUS
 
-const LISTENER_WRITERS_RATIO = Number(__ENV.LISTENER_WRITERS_RATIO || 3);
-const TOTAL_INSTANCES = Number(__ENV.TOTAL_INSTANCES || 1);
+const LISTENER_WRITERS_RATIO = Number(__ENV.LISTENER_WRITERS_RATIO || 3); // number of listeners per writer
+const TOTAL_INSTANCES = Number(__ENV.TOTAL_INSTANCES || 1); // total number of instances in the simulation test
+const CURRENT_INSTANCE = Number(__ENV.CURRENT_INSTANCE || 0); // 0 for the first instance, 1 for the second instance, etc.
 
-const ID_SPACE_SIZE = SSE_VUS * TOTAL_INSTANCES * LISTENER_WRITERS_RATIO;
+const START_INDEX_OFFSET = CURRENT_INSTANCE * LISTENER_WRITERS_RATIO * SSE_VUS;
+const ID_SPACE_SIZE = TOTAL_INSTANCES * LISTENER_WRITERS_RATIO * SSE_VUS - 1;
 
 // Generate valid hex client IDs that the bridge expects
 function getSSEIDs(vuIndex) {
-  const startIndex = (vuIndex) * LISTENER_WRITERS_RATIO;
+  const startIndex = START_INDEX_OFFSET + vuIndex * LISTENER_WRITERS_RATIO;
   const ids = [];
-  const ids_dec = [];
   for (let i = 0; i < LISTENER_WRITERS_RATIO; i++) {
-    const id = startIndex + i;
-    ids_dec.push(id);
-    ids.push([id.toString(16).padStart(64, '0')]);
+    ids.push([(startIndex + i).toString(16).padStart(64, '0')]);
   }
   return ids;
 }
@@ -50,10 +49,7 @@ function getSSEIDs(vuIndex) {
 // to avoid sending message to non-existent listener
 // vuIndex is the incrementing index
 function getID(vuIndex) {
-  let maxIndex = ID_SPACE_SIZE - LISTENER_WRITERS_RATIO - 1;
-  maxIndex = vuIndex < maxIndex ? vuIndex : maxIndex;
-    
-  const targetIndex = Math.floor(Math.random() * maxIndex);
+  const targetIndex = Math.floor(Math.random() * ID_SPACE_SIZE);
   return targetIndex.toString(16).padStart(64, '0');
 }
 
@@ -103,6 +99,7 @@ export function sseWorker() {
   const vuIndex = exec.scenario.iterationInTest;
   const ids = getSSEIDs(vuIndex);
   const url = `${BRIDGE_URL}/events?client_id=${ids.join(',')}`;
+  console.log('listenerIndex:', vuIndex, ids.map(h => parseInt(h, 16)));
   
   // Keep reconnecting for the test duration
   for (;;) {
@@ -149,6 +146,7 @@ export function sseWorker() {
 export function messageSender() {
   // Use fixed client pairs to reduce URL variations
   const vuIndex = exec.scenario.iterationInTest;
+
   const to = getID(vuIndex);
   let from = getID(vuIndex);
   // Avoid sending message to the same client ID
