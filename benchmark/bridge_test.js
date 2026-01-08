@@ -16,9 +16,33 @@ export let missing_timestamps = new Counter('missing_timestamps');
 
 const BRIDGE_URL = __ENV.BRIDGE_URL || 'http://localhost:8081/bridge';
 
+// Helper function to parse k6 duration string to seconds
+// Supports 's' (seconds), 'm' (minutes), 'h' (hours)
+function parseDuration(durationStr) {
+  const match = durationStr.match(/^(\d+)([smh])$/);
+  if (!match) {
+    throw new Error(`Invalid duration format: ${durationStr}. Expected format: number followed by 's', 'm', or 'h'`);
+  }
+  const value = Number(match[1]);
+  const unit = match[2];
+  const multipliers = { 's': 1, 'm': 60, 'h': 3600 };
+  return value * multipliers[unit];
+}
+
+// Helper function to format seconds to k6 duration string
+// Always returns seconds format
+function formatDuration(seconds) {
+  return `${seconds}s`;
+}
+
 // 1 minutes ramp-up, 1 minutes steady, 1 minutes ramp-down
 const RAMP_UP = __ENV.RAMP_UP || '10s';
 const HOLD = __ENV.HOLD || '10s';
+
+const rampUpTimeSeconds = parseDuration(RAMP_UP);
+const holdTimeSeconds = parseDuration(HOLD);
+
+const SSE_HOLD = __ENV.SSE_HOLD || formatDuration(rampUpTimeSeconds + holdTimeSeconds); // SSE hold time is the sum of the ramp-up and steady times to sync with sender
 const RAMP_DOWN = __ENV.RAMP_DOWN || '10s';
 
 const SSE_VUS = Number(__ENV.SSE_VUS || 100);
@@ -72,7 +96,7 @@ export const options = {
             startVUs: 0,
             stages: [
                 { duration: RAMP_UP, target: SSE_VUS },   // warm-up
-                { duration: HOLD, target: SSE_VUS },      // steady
+                { duration: SSE_HOLD, target: SSE_VUS },  // steady
                 { duration: RAMP_DOWN, target: 0 },       // cool-down
             ],
             gracefulRampDown: '30s',
@@ -81,6 +105,7 @@ export const options = {
         senders: {
             executor: 'ramping-arrival-rate',
             startRate: 0,
+            startTime: RAMP_UP, // wait for the SSE to be established, to avoid sending messages to non-existent listeners
             timeUnit: '1s',
             preAllocatedVUs: PRE_ALLOCATED_VUS,
             maxVUs: MAX_VUS,
@@ -99,7 +124,7 @@ export function sseWorker() {
   const vuIndex = exec.scenario.iterationInTest;
   const ids = getSSEIDs(vuIndex);
   const url = `${BRIDGE_URL}/events?client_id=${ids.join(',')}`;
-  console.log('listenerIndex:', vuIndex, ids.map(h => parseInt(h, 16)));
+  console.log('sseWorkerIndex:', vuIndex);
   
   // Keep reconnecting for the test duration
   for (;;) {
