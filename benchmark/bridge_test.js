@@ -48,9 +48,6 @@ const RAMP_DOWN = __ENV.RAMP_DOWN || '10s';
 const SSE_VUS = Number(__ENV.SSE_VUS || 100);
 const SEND_RATE = Number(__ENV.SEND_RATE || 1000);
 
-const PRE_ALLOCATED_VUS = SSE_VUS
-const MAX_VUS = PRE_ALLOCATED_VUS
-
 const LISTENER_WRITERS_RATIO = Number(__ENV.LISTENER_WRITERS_RATIO || 3); // number of listeners per writer
 const TOTAL_INSTANCES = Number(__ENV.TOTAL_INSTANCES || 1); // total number of instances in the simulation test
 const CURRENT_INSTANCE = Number(__ENV.CURRENT_INSTANCE || 0); // 0 for the first instance, 1 for the second instance, etc.
@@ -105,10 +102,9 @@ export const options = {
         senders: {
             executor: 'ramping-arrival-rate',
             startRate: 0,
-            startTime: RAMP_UP, // wait for the SSE to be established, to avoid sending messages to non-existent listeners
+            startTime: RAMP_UP, // wait for the SSE to be established, to avoid
             timeUnit: '1s',
-            preAllocatedVUs: PRE_ALLOCATED_VUS,
-            maxVUs: MAX_VUS,
+            preAllocatedVUs: SSE_VUS,
             stages: [
                 { duration: RAMP_UP, target: SEND_RATE }, // warm-up
                 { duration: HOLD, target: SEND_RATE },    // steady
@@ -124,7 +120,6 @@ export function sseWorker() {
   const vuIndex = exec.scenario.iterationInTest;
   const ids = getSSEIDs(vuIndex);
   const url = `${BRIDGE_URL}/events?client_id=${ids.join(',')}`;
-  console.log('sseWorkerIndex:', vuIndex);
   
   // Keep reconnecting for the test duration
   for (;;) {
