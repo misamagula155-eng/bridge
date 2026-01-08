@@ -102,7 +102,7 @@ export const options = {
         senders: {
             executor: 'ramping-arrival-rate',
             startRate: 0,
-            startTime: RAMP_UP, // wait for the SSE to be established, to avoid
+            startTime: RAMP_UP, // wait for the SSE to be established, to avoid sending messages to non-existent listeners
             timeUnit: '1s',
             preAllocatedVUs: SSE_VUS,
             stages: [
