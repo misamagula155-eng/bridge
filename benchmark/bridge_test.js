@@ -38,12 +38,11 @@ function formatDuration(seconds) {
 // 1 minutes ramp-up, 1 minutes steady, 1 minutes ramp-down
 const RAMP_UP = __ENV.RAMP_UP || '10s';
 const HOLD = __ENV.HOLD || '10s';
+const RAMP_DOWN = __ENV.RAMP_DOWN || '10s';
 
 const rampUpTimeSeconds = parseDuration(RAMP_UP);
 const holdTimeSeconds = parseDuration(HOLD);
-
-const SSE_HOLD = __ENV.SSE_HOLD || formatDuration(rampUpTimeSeconds + holdTimeSeconds); // SSE hold time is the sum of the ramp-up and steady times to sync with sender
-const RAMP_DOWN = __ENV.RAMP_DOWN || '10s';
+const rampDownTimeSeconds = parseDuration(RAMP_DOWN);
 
 const SSE_VUS = Number(__ENV.SSE_VUS || 100);
 const SEND_RATE = Number(__ENV.SEND_RATE || 1000);
@@ -92,9 +91,10 @@ export const options = {
             executor: 'ramping-vus',
             startVUs: 0,
             stages: [
-                { duration: RAMP_UP, target: SSE_VUS },   // warm-up
-                { duration: SSE_HOLD, target: SSE_VUS },  // steady
-                { duration: RAMP_DOWN, target: 0 },       // cool-down
+                { duration: formatDuration(rampUpTimeSeconds/2), target: SSE_VUS },   // warm-up
+                // steady state is the sum of the ramp-up, hold and ramp-down times of sender to keep listeners alive due senders session.
+                { duration: formatDuration(holdTimeSeconds+rampUpTimeSeconds/2+rampDownTimeSeconds/2), target: SSE_VUS },
+                { duration: formatDuration(rampDownTimeSeconds/2), target: 0 },       // cool-down
             ],
             gracefulRampDown: '30s',
             exec: 'sseWorker'
@@ -102,13 +102,13 @@ export const options = {
         senders: {
             executor: 'ramping-arrival-rate',
             startRate: 0,
-            startTime: RAMP_UP, // wait for the SSE to be established, to avoid sending messages to non-existent listeners
+            startTime: formatDuration(rampUpTimeSeconds/2), // wait for the SSE to be established, to avoid sending messages to non-existent listeners
             timeUnit: '1s',
             preAllocatedVUs: SSE_VUS,
             stages: [
-                { duration: RAMP_UP, target: SEND_RATE }, // warm-up
+                { duration: formatDuration(rampUpTimeSeconds/2), target: SEND_RATE }, // warm-up, start after the SSE is established
                 { duration: HOLD, target: SEND_RATE },    // steady
-                { duration: RAMP_DOWN, target: 0 },       // cool-down
+                { duration: formatDuration(rampDownTimeSeconds/2), target: 0 },       // cool-down
             ],
             gracefulStop: '30s',
             exec: 'messageSender'
