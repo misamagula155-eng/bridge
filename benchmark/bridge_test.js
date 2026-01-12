@@ -13,36 +13,18 @@ export let delivery_latency = new Trend('delivery_latency');
 export let json_parse_errors = new Counter('json_parse_errors');
 export let missing_timestamps = new Counter('missing_timestamps');
 
-
 const BRIDGE_URL = __ENV.BRIDGE_URL || 'http://localhost:8081/bridge';
 
-// Helper function to parse k6 duration string to seconds
-// Supports 's' (seconds), 'm' (minutes), 'h' (hours)
-function parseDuration(durationStr) {
-  const match = durationStr.match(/^(\d+)([smh])$/);
-  if (!match) {
-    throw new Error(`Invalid duration format: ${durationStr}. Expected format: number followed by 's', 'm', or 'h'`);
-  }
-  const value = Number(match[1]);
-  const unit = match[2];
-  const multipliers = { 's': 1, 'm': 60, 'h': 3600 };
-  return value * multipliers[unit];
-}
-
-// Helper function to format seconds to k6 duration string
-// Always returns seconds format
-function formatDuration(seconds) {
-  return `${seconds}s`;
-}
-
 // 1 minutes ramp-up, 1 minutes steady, 1 minutes ramp-down
-const RAMP_UP = __ENV.RAMP_UP || '10s';
-const HOLD = __ENV.HOLD || '10s';
-const RAMP_DOWN = __ENV.RAMP_DOWN || '10s';
+const SENDER_RAMP_UP = __ENV.SENDER_RAMP_UP || '10s';
+const SENDER_HOLD = __ENV.SENDER_HOLD || '30s';
+const SENDER_RAMP_DOWN = __ENV.SENDER_RAMP_DOWN || '10s';
+const SENDER_DELAY = __ENV.SENDER_DELAY || '10s';
 
-const rampUpTimeSeconds = parseDuration(RAMP_UP);
-const holdTimeSeconds = parseDuration(HOLD);
-const rampDownTimeSeconds = parseDuration(RAMP_DOWN);
+const SSE_RAMP_UP = __ENV.SSE_RAMP_UP || '10s';
+const SSE_HOLD = __ENV.SSE_HOLD || '50s';
+const SSE_RAMP_DOWN = __ENV.SSE_RAMP_DOWN || '10s';
+const SSE_DELAY = __ENV.SSE_DELAY || '0s';
 
 const SSE_VUS = Number(__ENV.SSE_VUS || 100);
 const SEND_RATE = Number(__ENV.SEND_RATE || 1000);
@@ -65,10 +47,8 @@ function getSSEIDs(vuIndex) {
 }
 
 // Generate valid hex client IDs that the bridge expects
-// This generates a random client ID for the sender in the ID space limited by vuIndex
-// to avoid sending message to non-existent listener
-// vuIndex is the incrementing index
-function getID(vuIndex) {
+// This generates a random client ID for the sender in the ID space
+function getID() {
   const targetIndex = Math.floor(Math.random() * ID_SPACE_SIZE);
   return targetIndex.toString(16).padStart(64, '0');
 }
@@ -90,11 +70,11 @@ export const options = {
         sse: {
             executor: 'ramping-vus',
             startVUs: 0,
+            startTime: SSE_DELAY,
             stages: [
-                { duration: formatDuration(rampUpTimeSeconds/2), target: SSE_VUS },   // warm-up
-                // steady state is the sum of the ramp-up, hold and ramp-down times of sender to keep listeners alive due senders session.
-                { duration: formatDuration(holdTimeSeconds+rampUpTimeSeconds/2+rampDownTimeSeconds/2), target: SSE_VUS },
-                { duration: formatDuration(rampDownTimeSeconds/2), target: 0 },       // cool-down
+                { duration: SSE_RAMP_UP, target: SSE_VUS },   // warm-up
+                { duration: SSE_HOLD, target: SSE_VUS },      // steady
+                { duration: SSE_RAMP_DOWN, target: 0 },       // cool-down
             ],
             gracefulRampDown: '30s',
             exec: 'sseWorker'
@@ -102,13 +82,13 @@ export const options = {
         senders: {
             executor: 'ramping-arrival-rate',
             startRate: 0,
-            startTime: formatDuration(rampUpTimeSeconds/2), // wait for the SSE to be established, to avoid sending messages to non-existent listeners
+            startTime: SENDER_DELAY,
             timeUnit: '1s',
             preAllocatedVUs: SSE_VUS,
             stages: [
-                { duration: formatDuration(rampUpTimeSeconds/2), target: SEND_RATE }, // warm-up, start after the SSE is established
-                { duration: HOLD, target: SEND_RATE },    // steady
-                { duration: formatDuration(rampDownTimeSeconds/2), target: 0 },       // cool-down
+                { duration: SENDER_RAMP_UP, target: SEND_RATE }, // warm-up, start after the SSE is established
+                { duration: SENDER_HOLD, target: SEND_RATE },    // steady
+                { duration: SENDER_RAMP_DOWN, target: 0 },       // cool-down
             ],
             gracefulStop: '30s',
             exec: 'messageSender'
@@ -164,11 +144,8 @@ export function sseWorker() {
 }
 
 export function messageSender() {
-  // Use fixed client pairs to reduce URL variations
-  const vuIndex = exec.scenario.iterationInTest;
-
-  const to = getID(vuIndex);
-  let from = getID(vuIndex);
+  const to = getID();
+  let from = getID();
   // Avoid sending message to the same client ID
   while (from === to) {
     from = getID()
