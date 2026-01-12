@@ -86,7 +86,7 @@ export const options = {
             timeUnit: '1s',
             preAllocatedVUs: SSE_VUS,
             stages: [
-                { duration: SENDER_RAMP_UP, target: SEND_RATE }, // warm-up, start after the SSE is established
+                { duration: SENDER_RAMP_UP, target: SEND_RATE }, // warm-up
                 { duration: SENDER_HOLD, target: SEND_RATE },    // steady
                 { duration: SENDER_RAMP_DOWN, target: 0 },       // cool-down
             ],
@@ -97,8 +97,7 @@ export const options = {
 };
 
 export function sseWorker() {
-  const vuIndex = exec.scenario.iterationInTest;
-  const ids = getSSEIDs(vuIndex);
+  const ids = getSSEIDs(exec.scenario.iterationInTest);
   const url = `${BRIDGE_URL}/events?client_id=${ids.join(',')}`;
   
   // Keep reconnecting for the test duration

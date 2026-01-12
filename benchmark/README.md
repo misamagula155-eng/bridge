@@ -18,7 +18,21 @@ This directory contains performance testing tools for the Ton Connect Bridge Ser
    LOG_LEVEL=error ./bridge
    ```
 
-3. **Run benchmark:**
+3. **Flush Redis data (important for clean test results):**
+   
+   Before running benchmarks, flush Redis data locally to avoid collisions with previous test data:
+   ```bash
+   redis-cli FLUSHALL
+   ```
+   
+   Or if using a specific Redis database:
+   ```bash
+   redis-cli -n <database_number> FLUSHDB
+   ```
+   
+   **Note**: This ensures that test results are not affected by stale data from previous test runs, providing accurate and reproducible benchmark results.
+
+4. **Run benchmark:**
    ```bash
    cd benchmark
    ./k6 run bridge_test.js
@@ -152,6 +166,19 @@ BRIDGE_URL=http://bridge.example.com:8081/bridge ./k6 run bridge_test.js
 ```
 
 ## 📈 Understanding Results
+
+### Preparation for Accurate Results
+
+**Important**: Always flush Redis data before running tests to ensure clean results:
+```bash
+redis-cli FLUSHALL
+```
+
+This prevents:
+- Stale messages from previous test runs affecting metrics
+- Client ID collisions with previous test data
+- Inaccurate latency measurements due to cached data
+- Message delivery inconsistencies
 
 ### Key Metrics to Monitor
 
