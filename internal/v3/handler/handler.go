@@ -166,6 +166,15 @@ func (h *handler) EventRegistrationHandler(c echo.Context) error {
 	}
 
 	clientIds := strings.Split(clientId[0], ",")
+	for _, id := range clientIds {
+		if _, err := utils.NewPublicAddressFromString(id); err != nil {
+			badRequestMetric.Inc()
+			errMsg := fmt.Errorf("param \"client_id\" must be a valid public address, error: %w", err).Error()
+			log.Error(errMsg)
+			h.logEventRegistrationValidationFailure("", traceId, errMsg)
+			return c.JSON(utils.HttpResError(errMsg, http.StatusBadRequest))
+		}
+	}
 	clientIdsPerConnectionMetric.Observe(float64(len(clientIds)))
 
 	session := h.CreateSession(clientIds, lastEventId, traceId)
@@ -281,14 +290,29 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 		log.Error(errorMsg)
 		return h.failValidation(c, errorMsg, "", traceId, "", "")
 	}
-	clientID := clientIdValues[0]
 
-	toId, ok := params["to"]
+	clientID, err := utils.NewPublicAddressFromString(clientIdValues[0])
+	if err != nil {
+		err = fmt.Errorf("failed to parse the \"client_id\" address: %w", err)
+		badRequestMetric.Inc()
+		log.Error(err)
+		return h.failValidation(c, err.Error(), clientIdValues[0], traceId, "", "")
+	}
+
+	toIdValues, ok := params["to"]
 	if !ok {
 		badRequestMetric.Inc()
 		errorMsg := "param \"to\" not present"
 		log.Error(errorMsg)
-		return h.failValidation(c, errorMsg, clientID, traceId, "", "")
+		return h.failValidation(c, errorMsg, clientID.String(), traceId, "", "")
+	}
+
+	toId, err := utils.NewPublicAddressFromString(toIdValues[0])
+	if err != nil {
+		err = fmt.Errorf("failed to parse the \"to\" address: %w", err)
+		badRequestMetric.Inc()
+		log.Error(err)
+		return h.failValidation(c, err.Error(), clientID.String(), traceId, "", "")
 	}
 
 	ttlParam, ok := params["ttl"]
@@ -296,25 +320,25 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 		badRequestMetric.Inc()
 		errorMsg := "param \"ttl\" not present"
 		log.Error(errorMsg)
-		return h.failValidation(c, errorMsg, clientID, traceId, "", "")
+		return h.failValidation(c, errorMsg, clientID.String(), traceId, "", "")
 	}
 	ttl, err := strconv.ParseInt(ttlParam[0], 10, 32)
 	if err != nil {
 		badRequestMetric.Inc()
 		log.Error(err)
-		return h.failValidation(c, err.Error(), clientID, traceId, "", "")
+		return h.failValidation(c, err.Error(), clientID.String(), traceId, "", "")
 	}
 	if ttl > 300 { // TODO: config MaxTTL value
 		badRequestMetric.Inc()
 		errorMsg := "param \"ttl\" too high"
 		log.Error(errorMsg)
-		return h.failValidation(c, errorMsg, clientID, traceId, "", "")
+		return h.failValidation(c, errorMsg, clientID.String(), traceId, "", "")
 	}
 	message, err := io.ReadAll(c.Request().Body)
 	if err != nil {
 		badRequestMetric.Inc()
 		log.Error(err)
-		return h.failValidation(c, err.Error(), clientID, traceId, "", "")
+		return h.failValidation(c, err.Error(), clientID.String(), traceId, "", "")
 	}
 
 	if config.Config.CopyToURL != "" {
@@ -337,24 +361,24 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 		topic = topicParam[0]
 		go func(clientID, topic, message string) {
 			handler_common.SendWebhook(clientID, handler_common.WebhookData{Topic: topic, Hash: message})
-		}(clientID, topic, string(message))
+		}(clientID.String(), topic, string(message))
 	}
 
 	mes, err := json.Marshal(models.BridgeMessage{
-		From:    clientID,
+		From:    clientID.String(),
 		Message: string(message),
 		TraceId: traceId,
 	})
 	if err != nil {
 		badRequestMetric.Inc()
 		log.Error(err)
-		return h.failValidation(c, err.Error(), clientID, traceId, topic, "")
+		return h.failValidation(c, err.Error(), clientID.String(), traceId, topic, "")
 	}
 
 	sseMessage := models.SseMessage{
 		EventId: h.eventIDGen.NextID(),
 		Message: mes,
-		To:      toId[0],
+		To:      toId.String(),
 	}
 
 	// Send message only to storage - pub-sub will handle distribution
@@ -389,7 +413,7 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 
 	if h.eventCollector != nil {
 		_ = h.eventCollector.TryAdd(h.eventBuilder.NewBridgeMessageReceivedEvent(
-			clientID,
+			clientID.String(),
 			traceId,
 			topic,
 			sseMessage.EventId,

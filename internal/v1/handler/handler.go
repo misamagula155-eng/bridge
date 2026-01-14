@@ -182,6 +182,16 @@ func (h *handler) EventRegistrationHandler(c echo.Context) error {
 	}
 
 	clientIds := strings.Split(clientId, ",")
+	for _, id := range clientIds {
+		if _, err := utils.NewPublicAddressFromString(id); err != nil {
+			badRequestMetric.Inc()
+			errMsg := fmt.Errorf("param \"client_id\" must be a valid public address, got: %s, error: %w", id, err).Error()
+			log.Error(errMsg)
+			h.logEventRegistrationValidationFailure("", traceId, errMsg)
+			return c.JSON(utils.HttpResError(errMsg, http.StatusBadRequest))
+		}
+	}
+
 	clientIdsPerConnectionMetric.Observe(float64(len(clientIds)))
 
 	connectIP := h.realIP.Extract(c.Request())
@@ -285,14 +295,29 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 		log.Error(errorMsg)
 		return h.logMessageSentValidationFailure(c, errorMsg, "", traceId, "", "")
 	}
-	clientID := clientIdValues[0]
 
-	toId, ok := params["to"]
-	if !ok {
+	clientID, err := utils.NewPublicAddressFromString(clientIdValues[0])
+	if err != nil {
+		err = fmt.Errorf("failed to parse the \"client_id\" address: %w", err)
+		badRequestMetric.Inc()
+		log.Error(err)
+		return h.logMessageSentValidationFailure(c, err.Error(), clientIdValues[0], traceId, "", "")
+	}
+
+	toIdValues, ok := params["to"]
+	if !ok || len(toIdValues) == 0 {
 		badRequestMetric.Inc()
 		errorMsg := "param \"to\" not present"
 		log.Error(errorMsg)
-		return h.logMessageSentValidationFailure(c, errorMsg, clientID, traceId, "", "")
+		return h.logMessageSentValidationFailure(c, errorMsg, clientID.String(), traceId, "", "")
+	}
+
+	toId, err := utils.NewPublicAddressFromString(toIdValues[0])
+	if err != nil {
+		err = fmt.Errorf("failed to parse the \"to\" address: %w", err)
+		badRequestMetric.Inc()
+		log.Error(err)
+		return h.logMessageSentValidationFailure(c, err.Error(), clientID.String(), traceId, "", "")
 	}
 
 	ttlParam, ok := params["ttl"]
@@ -300,28 +325,28 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 		badRequestMetric.Inc()
 		errorMsg := "param \"ttl\" not present"
 		log.Error(errorMsg)
-		return h.logMessageSentValidationFailure(c, errorMsg, clientID, traceId, "", "")
+		return h.logMessageSentValidationFailure(c, errorMsg, clientID.String(), traceId, "", "")
 	}
 	ttl, err := strconv.ParseInt(ttlParam[0], 10, 32)
 	if err != nil {
 		badRequestMetric.Inc()
 		log.Error(err)
-		return h.logMessageSentValidationFailure(c, err.Error(), clientID, traceId, "", "")
+		return h.logMessageSentValidationFailure(c, err.Error(), clientID.String(), traceId, "", "")
 	}
 	if ttl > 300 { // TODO: config
 		badRequestMetric.Inc()
 		errorMsg := "param \"ttl\" too high"
 		log.Error(errorMsg)
-		return h.logMessageSentValidationFailure(c, errorMsg, clientID, traceId, "", "")
+		return h.logMessageSentValidationFailure(c, errorMsg, clientID.String(), traceId, "", "")
 	}
 	message, err := io.ReadAll(c.Request().Body)
 	if err != nil {
 		badRequestMetric.Inc()
 		log.Error(err)
-		return h.logMessageSentValidationFailure(c, err.Error(), clientID, traceId, "", "")
+		return h.logMessageSentValidationFailure(c, err.Error(), clientID.String(), traceId, "", "")
 	}
 
-	data := append(message, []byte(clientID)...)
+	data := append(message, []byte(clientID.String())...)
 	sum := sha256.Sum256(data)
 	messageId := int64(binary.BigEndian.Uint64(sum[:8]))
 	if ok := storage.TransferedCache.MarkIfNotExists(messageId); ok {
@@ -348,7 +373,7 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 		topic = topicParam[0]
 		go func(clientID, topic, message string) {
 			handler_common.SendWebhook(clientID, handler_common.WebhookData{Topic: topic, Hash: message})
-		}(clientID, topic, string(message))
+		}(clientID.String(), topic, string(message))
 	}
 
 	var requestSource string
@@ -367,7 +392,7 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 				Time:      strconv.FormatInt(time.Now().Unix(), 10),
 				UserAgent: userAgent,
 			},
-			toId[0], // todo - check to id properly
+			toId.String(),
 		)
 		if err != nil {
 			badRequestMetric.Inc()
@@ -375,7 +400,7 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 			return h.logMessageSentValidationFailure(
 				c,
 				fmt.Sprintf("failed to encrypt request source: %v", err),
-				clientID,
+				clientID.String(),
 				traceId,
 				topic,
 				"",
@@ -385,7 +410,7 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 	}
 
 	mes, err := json.Marshal(models.BridgeMessage{
-		From:                clientID,
+		From:                clientID.String(),
 		Message:             string(message),
 		BridgeRequestSource: requestSource,
 		TraceId:             traceId,
@@ -393,7 +418,7 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 	if err != nil {
 		badRequestMetric.Inc()
 		log.Error(err)
-		return h.logMessageSentValidationFailure(c, err.Error(), clientID, traceId, topic, "")
+		return h.logMessageSentValidationFailure(c, err.Error(), clientID.String(), traceId, topic, "")
 	}
 
 	if topic == "disconnect" && len(mes) < config.Config.DisconnectEventMaxSize {
@@ -403,10 +428,10 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 	sseMessage := models.SseMessage{
 		EventId: h.nextID(),
 		Message: mes,
-		To:      toId[0],
+		To:      toId.String(),
 	}
 	h.Mux.RLock()
-	s, ok := h.Connections[toId[0]]
+	s, ok := h.Connections[toId.String()]
 	h.Mux.RUnlock()
 	if ok {
 		s.mux.Lock()
@@ -439,14 +464,14 @@ func (h *handler) SendMessageHandler(c echo.Context) error {
 	log.WithFields(logrus.Fields{
 		"hash":     messageHash,
 		"from":     fromId,
-		"to":       toId[0],
+		"to":       toId,
 		"event_id": sseMessage.EventId,
 		"trace_id": traceId,
 	}).Debug("message received")
 
 	if h.eventCollector != nil {
 		_ = h.eventCollector.TryAdd(h.eventBuilder.NewBridgeMessageReceivedEvent(
-			clientID,
+			clientID.String(),
 			traceId,
 			topic,
 			sseMessage.EventId,
