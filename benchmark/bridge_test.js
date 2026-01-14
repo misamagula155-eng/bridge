@@ -57,7 +57,7 @@ export const options = {
     discardResponseBodies: true,
     systemTags: ['status', 'method', 'name', 'scenario'], // Exclude 'url' to prevent metrics explosion
     thresholds: {
-        http_req_failed: ['rate<0.01'],
+        http_req_failed: ['rate<0.0001'],
         delivery_latency: ['p(95)<2000'],
         sse_errors: ['count<10'], // SSE should be very stable
         json_parse_errors: ['count<5'], // Should rarely fail to parse

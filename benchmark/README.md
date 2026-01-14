@@ -109,7 +109,7 @@ Standard k6 metrics are also collected (HTTP request duration, status codes, etc
 
 The test includes the following pass/fail thresholds:
 
-- `http_req_failed < 1%` - HTTP request failure rate must be below 1%
+- `http_req_failed < 0.01%` - HTTP request failure rate must be below 0.01%
 - `delivery_latency p(95) < 2000ms` - 95th percentile latency must be below 2 seconds
 - `sse_errors < 10` - Total SSE errors must be below 10
 - `json_parse_errors < 5` - Total JSON parse errors must be below 5
@@ -126,7 +126,7 @@ The test includes the following pass/fail thresholds:
 
 ### Custom Load Configuration
 ```bash
-SSE_VUS=200 SEND_RATE=2000 ./k6 run bridge_test.js
+SSE_VUS=100 SEND_RATE=2000 ./k6 run bridge_test.js
 ```
 
 ### Extended Test Duration
@@ -138,7 +138,7 @@ SENDER_DELAY=30s ./k6 run bridge_test.js
 
 ### High Load Test
 ```bash
-SSE_VUS=500 SEND_RATE=5000 \
+SSE_VUS=50 SEND_RATE=5000 \
 SSE_RAMP_UP=10m SSE_HOLD=30m SSE_RAMP_DOWN=10m \
 SENDER_RAMP_UP=10m SENDER_HOLD=30m SENDER_RAMP_DOWN=10m \
 ./k6 run bridge_test.js
