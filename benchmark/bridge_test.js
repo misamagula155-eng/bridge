@@ -108,8 +108,8 @@ export function sseWorker() {
     try {
       sse.open(url, { 
         headers: { 
-          Accept: 'text/event-stream',
-          Authorization: 'Bearer ' + AUTH_TOKEN,
+          'Accept': 'text/event-stream',
+          'Authorization': 'Bearer ' + AUTH_TOKEN,
         },
         tags: { name: 'SSE /events' }
       }, (c) => {
@@ -163,7 +163,7 @@ export function messageSender() {
   const r = http.post(url, body, {
     headers: { 
       'Content-Type': 'text/plain',
-      Authorization: 'Bearer ' + AUTH_TOKEN,
+      'Authorization': 'Bearer ' + AUTH_TOKEN,
     },
     timeout: '10s',
     tags: { name: 'POST /message' }, // Group all message requests

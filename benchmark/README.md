@@ -10,8 +10,7 @@ This directory contains performance testing tools for the Ton Connect Bridge Ser
    xk6 build --with github.com/phymbert/xk6-sse@latest
    ```
 
-2. **Start the bridge server:**
-   Start the storage
+2. **Start the bridge server and storage:**
    ```bash
    make build
    docker-compose -f docker/docker-compose.cluster-valkey.yml up -d
