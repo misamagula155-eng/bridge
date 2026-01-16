@@ -11,12 +11,29 @@ This directory contains performance testing tools for the Ton Connect Bridge Ser
    ```
 
 2. **Start the bridge server:**
+   Start the storage
    ```bash
    make build
-   POSTGRES_URI="postgres://bridge_user:bridge_password@localhost:5432/bridge?sslmode=disable" \
+   docker-compose -f docker/docker-compose.cluster-valkey.yml up -d
+   STORAGE=valkey VALKEY_URI=redis://127.0.0.1:6379 \
    PORT=8081 CORS_ENABLE=true RPS_LIMIT=100 CONNECTIONS_LIMIT=8000 \
    LOG_LEVEL=error ./bridge
    ```
+
+> **Tip: Bypass Bridge Rate Limits in Local/Test**
+
+If your bridge server is configured with request rate limiting (e.g. `RPS_LIMIT`), you can bypass these limits for benchmark and development purposes by setting the environment variable `RATE_LIMITS_BY_PASS_TOKEN` to a known token, such as `test-token`.  
+The benchmark script will use this token via its `Authorization: Bearer` header, so you should make sure your bridge instantiation command includes this variable:
+
+```bash
+RATE_LIMITS_BY_PASS_TOKEN=test-token \
+STORAGE=valkey VALKEY_URI=redis://127.0.0.1:6379 \
+PORT=8081 CORS_ENABLE=true RPS_LIMIT=100 CONNECTIONS_LIMIT=8000 \
+LOG_LEVEL=error ./bridge
+```
+
+This instructs the server to exempt any request with `Authorization: Bearer test-token` from rate limits. **Do not use this configuration in production environments.**  
+By default, the `bridge_test.js` load script will send this token (unless overridden via the `AUTH_TOKEN` environment variable).
 
 3. **Flush Redis data (important for clean test results):**
    
@@ -65,6 +82,8 @@ The test runs two parallel scenarios:
 ## ⚙️ Configuration Options
 
 All configuration is done via environment variables:
+
+- `AUTH_TOKEN` - Bearer token used to authenticate requests to the bridge server and bypass any rate limiting. For local development or testing, you can use a fixed string such as `test-token`; for production-like testing, set this to a valid token if your bridge enforces authentication.
 
 ### Load Configuration
 - `SSE_VUS` (default: `100`) - Number of SSE listener virtual users
@@ -126,7 +145,7 @@ The test includes the following pass/fail thresholds:
 
 ### Custom Load Configuration
 ```bash
-SSE_VUS=100 SEND_RATE=2000 ./k6 run bridge_test.js
+SSE_VUS=2000 SEND_RATE=20 ./k6 run bridge_test.js
 ```
 
 ### Extended Test Duration
@@ -138,7 +157,7 @@ SENDER_DELAY=30s ./k6 run bridge_test.js
 
 ### High Load Test
 ```bash
-SSE_VUS=50 SEND_RATE=5000 \
+SSE_VUS=5000 SEND_RATE=50 \
 SSE_RAMP_UP=10m SSE_HOLD=30m SSE_RAMP_DOWN=10m \
 SENDER_RAMP_UP=10m SENDER_HOLD=30m SENDER_RAMP_DOWN=10m \
 ./k6 run bridge_test.js
@@ -172,6 +191,13 @@ BRIDGE_URL=http://bridge.example.com:8081/bridge ./k6 run bridge_test.js
 **Important**: Always flush Redis data before running tests to ensure clean results:
 ```bash
 redis-cli FLUSHALL
+```
+
+Local valkey cluster cleanup
+```bash
+docker exec -i docker-valkey-shard1-1 redis-cli -p 6379 FLUSHALL
+docker exec -i docker-valkey-shard2-1 redis-cli -p 6380 FLUSHALL
+docker exec -i docker-valkey-shard3-1 redis-cli -p 6381 FLUSHALL
 ```
 
 This prevents:

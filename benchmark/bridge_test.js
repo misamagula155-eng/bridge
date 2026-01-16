@@ -15,6 +15,9 @@ export let missing_timestamps = new Counter('missing_timestamps');
 
 const BRIDGE_URL = __ENV.BRIDGE_URL || 'http://localhost:8081/bridge';
 
+// Auth token to bypass rate limits
+const AUTH_TOKEN = __ENV.AUTH_TOKEN || 'test-token';
+
 // 1 minutes ramp-up, 1 minutes steady, 1 minutes ramp-down
 const SENDER_RAMP_UP = __ENV.SENDER_RAMP_UP || '10s';
 const SENDER_HOLD = __ENV.SENDER_HOLD || '30s';
@@ -104,7 +107,10 @@ export function sseWorker() {
   for (;;) {
     try {
       sse.open(url, { 
-        headers: { Accept: 'text/event-stream' },
+        headers: { 
+          Accept: 'text/event-stream',
+          Authorization: 'Bearer ' + AUTH_TOKEN,
+        },
         tags: { name: 'SSE /events' }
       }, (c) => {
         c.on('event', (ev) => {
@@ -155,7 +161,10 @@ export function messageSender() {
   const url = `${BRIDGE_URL}/message?client_id=${from}&to=${to}&ttl=300&topic=${topic}`;
   
   const r = http.post(url, body, {
-    headers: { 'Content-Type': 'text/plain' },
+    headers: { 
+      'Content-Type': 'text/plain',
+      Authorization: 'Bearer ' + AUTH_TOKEN,
+    },
     timeout: '10s',
     tags: { name: 'POST /message' }, // Group all message requests
   });
